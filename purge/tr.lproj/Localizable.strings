@@ -1510,3 +1510,26 @@
 "macOS's asset service stopped before it answered" = "macOS'in varlık servisi yanıt vermeden durdu";
 "macOS's asset service couldn't be reached" = "macOS'in varlık servisine ulaşılamadı";
 "macOS's asset service sent an answer Purge couldn't read" = "macOS'in varlık servisi, Purge'ün okuyamadığı bir yanıt gönderdi";
+
+/* Hidden files and developer deep scan */
+"The selected project is in use or is no longer available to clean." = "Seçilen proje kullanılıyor veya artık temizlenemiyor.";
+"Choose a folder inside your home folder." = "Ana klasörünüzün içindeki bir klasörü seçin.";
+"Deep scan stopped." = "Derin tarama durduruldu.";
+"Waiting for other scans…" = "Diğer taramalar bekleniyor…";
+"Scanning project folders…" = "Proje klasörleri taranıyor…";
+"Inspecting developer caches…" = "Geliştirici önbellekleri inceleniyor…";
+"Deep scan complete. Review the project results below." = "Derin tarama tamamlandı. Aşağıdaki proje sonuçlarını inceleyin.";
+"Purge couldn't save hidden files. This change lasts until Purge quits." = "Purge gizli dosyaları kaydedemedi. Bu değişiklik Purge kapanana kadar geçerli.";
+"Stop Deep Scan" = "Derin Taramayı Durdur";
+"Deep Scan" = "Derin Tarama";
+"Some folders could not be fully scanned (permission, depth, or folder size limit)." = "Bazı klasörler izin, derinlik veya klasör boyutu sınırı nedeniyle tamamen taranamadı.";
+"Other cache folders to inspect (%lld)" = "İncelenecek diğer önbellek klasörleri (%lld)";
+"Hidden (%lld)" = "Gizli (%lld)";
+"Unhide Selected" = "Seçilenleri Göster";
+"Hide Selected" = "Seçilenleri Gizle";
+"Hide selected files" = "Seçili dosyaları gizle";
+"Developer cleaning" = "Geliştirici temizliği";
+"Review project artifacts with an on-demand deep scan." = "İsteğe bağlı derin taramayla proje çıktılarını inceleyin.";
+"Developer project folders" = "Geliştirici proje klasörleri";
+"Deep Scan searches these folders for project artifacts. It also inspects ~/.cache when present." = "Derin Tarama bu klasörlerde proje çıktılarını arar. Varsa ~/.cache klasörünü de inceler.";
+"No project folders added" = "Proje klasörü eklenmedi";

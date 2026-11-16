@@ -632,14 +632,70 @@ struct DevToolsView: View {
     }
 
     var body: some View {
-        Group {
-            if usesExternalScrollContainer {
-                externalScrollBody
-            } else {
-                standardBody
+        VStack(spacing: 0) {
+            if store.developerCleaningEnabled { deepScanControls }
+            Group {
+                if usesExternalScrollContainer {
+                    externalScrollBody
+                } else {
+                    standardBody
+                }
             }
         }
         .background(AppColors.surfaceBase)
+    }
+
+    private var deepScanControls: some View {
+        VStack(alignment: .leading, spacing: AppStyle.Spacing.small) {
+            HStack {
+                Button {
+                    if store.isDeepScanning {
+                        store.cancelDeepScan()
+                    } else {
+                        filterRaw = SafetyFilter.all.rawValue
+                        store.endSafetyFilterVisit()
+                        store.startDeepScan()
+                    }
+                } label: {
+                    Label(store.isDeepScanning ? "Stop Deep Scan" : "Deep Scan", systemImage: store.isDeepScanning ? "stop.fill" : "magnifyingglass")
+                }
+                .buttonStyle(.purge(.secondary))
+                .disabled(!store.isDeepScanning && (isLoading || store.isScanningProjects || store.isDeleting))
+                if store.isDeepScanning { ProgressView().controlSize(.small) }
+                if !store.deepScanStatus.isEmpty {
+                    Text(store.deepScanStatus).font(.caption).foregroundStyle(AppColors.textSecondary)
+                }
+                Spacer()
+            }
+            if !store.deepScanIssues.isEmpty {
+                Text("Some folders could not be fully scanned (permission, depth, or folder size limit).")
+                    .font(.caption).foregroundStyle(AppColors.textSecondary)
+                ForEach(store.deepScanIssues.prefix(5), id: \.self) { path in
+                    Text(path).font(.caption).foregroundStyle(AppColors.textSecondary).lineLimit(1)
+                }
+            }
+            if !store.deepScanUnknownCaches.isEmpty {
+                DisclosureGroup("Other cache folders to inspect (\(store.deepScanUnknownCaches.count))") {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: AppStyle.Spacing.xSmall) {
+                            ForEach(store.deepScanUnknownCaches) { folder in
+                                HStack {
+                                    Text(folder.url.lastPathComponent)
+                                    Text(formatBytes(folder.sizeBytes)).foregroundStyle(AppColors.textSecondary)
+                                    Spacer()
+                                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
+                }
+                .font(.caption)
+            }
+        }
+        .padding(.horizontal, AppDetailPageLayout.horizontalInset)
+        .padding(.vertical, AppStyle.Spacing.small)
     }
 
     private var standardBody: some View {

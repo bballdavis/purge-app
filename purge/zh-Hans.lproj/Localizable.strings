@@ -1510,3 +1510,26 @@
 "MB" = "MB";
 "GB" = "GB";
 "TB" = "TB";
+
+/* Hidden files and developer deep scan */
+"The selected project is in use or is no longer available to clean." = "所选项目正在使用中或已无法清理。";
+"Choose a folder inside your home folder." = "请选择个人文件夹内的文件夹。";
+"Deep scan stopped." = "深度扫描已停止。";
+"Waiting for other scans…" = "正在等待其他扫描…";
+"Scanning project folders…" = "正在扫描项目文件夹…";
+"Inspecting developer caches…" = "正在检查开发缓存…";
+"Deep scan complete. Review the project results below." = "深度扫描已完成。请检查下方的项目结果。";
+"Purge couldn't save hidden files. This change lasts until Purge quits." = "Purge 无法保存隐藏文件列表。此更改将在 Purge 退出前保持有效。";
+"Stop Deep Scan" = "停止深度扫描";
+"Deep Scan" = "深度扫描";
+"Some folders could not be fully scanned (permission, depth, or folder size limit)." = "由于权限、深度或文件夹大小限制，部分文件夹未能完全扫描。";
+"Other cache folders to inspect (%lld)" = "其他待检查的缓存文件夹（%lld）";
+"Hidden (%lld)" = "已隐藏（%lld）";
+"Unhide Selected" = "取消隐藏所选项";
+"Hide Selected" = "隐藏所选项";
+"Hide selected files" = "隐藏所选文件";
+"Developer cleaning" = "开发者清理";
+"Review project artifacts with an on-demand deep scan." = "通过按需深度扫描检查项目构建文件。";
+"Developer project folders" = "开发项目文件夹";
+"Deep Scan searches these folders for project artifacts. It also inspects ~/.cache when present." = "深度扫描会在这些文件夹中查找项目构建文件，并在 ~/.cache 存在时检查该文件夹。";
+"No project folders added" = "尚未添加项目文件夹";

@@ -58,6 +58,16 @@ struct PageHeaderActionBar: View {
             .disabled(secondary.isDisabled)
             .help(help(for: secondary, showsTitle: showsTitles))
 
+            if tab == .largeFiles {
+                Button { store.hideSelectedLargeFiles() } label: {
+                    if showsTitles { Label("Hide Selected", systemImage: "eye.slash") }
+                    else { Image(systemName: "eye.slash") }
+                }
+                .buttonStyle(.purge(.secondary))
+                .disabled(largeFileSelection.ids.isEmpty || store.isDeleting)
+                .help("Hide selected files")
+            }
+
             Button(action: primary.action) {
                 MorphingActionLabel(action: primary, showsTitle: showsTitles)
             }

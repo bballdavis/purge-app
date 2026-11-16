@@ -1188,7 +1188,9 @@ nonisolated final class DevScanner {
         roots: [URL]? = nil,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         continuation: AsyncStream<DeveloperScanEvent>.Continuation? = nil,
-        onDirectory: (@Sendable (URL) -> Void)? = nil
+        onDirectory: (@Sendable (URL) -> Void)? = nil,
+        onIssue: (@Sendable (String) -> Void)? = nil,
+        includeRecent: Bool = false
     ) async -> [ProjectGroup] {
         let walkStart = Date()
         let (discoveredRoots, directoriesWalked) = Self.findProjectRoots(
@@ -1196,7 +1198,8 @@ nonisolated final class DevScanner {
             home: home,
             access: access,
             maxDepth: maxDepth,
-            onDirectory: onDirectory
+            onDirectory: onDirectory,
+            onIssue: onIssue
         )
         // A cancelled walk stopped part way. Its list is incomplete, so nothing is sized.
         guard !Task.isCancelled else { return [] }
@@ -1210,7 +1213,7 @@ nonisolated final class DevScanner {
         /// Build artifact list per root (expensive sizing runs concurrently).
         let sizingStart = Date()
         let filter = ProjectListingFilter(
-            staleDays: DevToolsStalenessOption.currentThresholdDays(),
+            staleDays: includeRecent ? DevToolsStalenessOption.showAll.rawValue : DevToolsStalenessOption.currentThresholdDays(),
             now: Date(),
             live: .current()
         )
@@ -1275,7 +1278,8 @@ nonisolated final class DevScanner {
         home: URL,
         access: ScanAccess,
         maxDepth: Int = 4,
-        onDirectory: (@Sendable (URL) -> Void)? = nil
+        onDirectory: (@Sendable (URL) -> Void)? = nil,
+        onIssue: (@Sendable (String) -> Void)? = nil
     ) -> (roots: [(URL, [ProjectType])], directoriesWalked: Int) {
         let fm = FileManager.default
         var discoveredRoots: [(URL, [ProjectType])] = []
@@ -1303,6 +1307,7 @@ nonisolated final class DevScanner {
         func walk(directory: URL, realPath: String?, depth: Int, maxDepth: Int) {
             // A newer scan replaced this one: stop rather than walk the rest of home.
             guard depth <= maxDepth, !Task.isCancelled else { return }
+            guard !ExcludedPathsStore.isExcluded(directory) else { return }
             directoriesWalked += 1
             onDirectory?(directory)
 
@@ -1312,15 +1317,22 @@ nonisolated final class DevScanner {
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey, .nameKey],
                 options: [.skipsPackageDescendants]
             )
+            if listing == nil { onIssue?(directory.path) }
 
             let types = Self.projectTypes(at: directory, listing: listing)
             if !types.isEmpty {
                 discoveredRoots.append((directory, types))
             }
 
-            guard depth < maxDepth, let entries = listing else { return }
+            guard depth < maxDepth else {
+                if onIssue != nil, listing?.contains(where: { !$0.lastPathComponent.hasPrefix(".") && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) == true {
+                    onIssue?(directory.path)
+                }
+                return
+            }
+            guard let entries = listing else { return }
 
-            guard entries.count <= Self.maxDirectoryEntriesBeforeSkip else { return }
+            guard entries.count <= Self.maxDirectoryEntriesBeforeSkip else { onIssue?(directory.path); return }
 
             for entry in entries {
                 let name = entry.lastPathComponent
@@ -1354,12 +1366,12 @@ nonisolated final class DevScanner {
             // root that is a link into a protected folder is never opened.
             let realRoot: String?
             if access == .limited {
-                guard let resolved = ProtectedLocations.readablePath(of: root, home: home) else { continue }
+                guard let resolved = ProtectedLocations.readablePath(of: root, home: home) else { onIssue?(root.path); continue }
                 realRoot = resolved
             } else {
                 realRoot = nil
             }
-            guard fm.fileExists(atPath: root.path) else { continue }
+            guard fm.fileExists(atPath: root.path) else { onIssue?(root.path); continue }
             // When the root is the home directory itself, limit to depth 1
             // to avoid scanning deep into personal folders like Documents recursively
             // since those are already covered by their own dedicated root entries above

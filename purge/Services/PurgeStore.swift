@@ -285,6 +285,16 @@ final class PurgeStore: ObservableObject {
             lastScanListDidChange(.projects)
         }
     }
+    @Published var developerCleaningEnabled = false
+    @Published var developerCleaningRoots: [String] = []
+    @Published var isDeepScanning = false
+    @Published var deepScanStatus = ""
+    @Published var deepScanIssues: [String] = []
+    @Published var deepScanUnknownCaches: [DeepScanCacheFolder] = []
+    var deepScanCacheRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache", isDirectory: true)
+    private var deepScanTask: Task<Void, Never>?
+    private var deepScanRunID: UUID?
+    private var deepScanArtifactIDs = Set<String>()
     @Published var largeFiles: [LargeFile] = [] {
         didSet {
             largeFilesRevision &+= 1
@@ -312,6 +322,7 @@ final class PurgeStore: ObservableObject {
     /// scroll position. Only views that display selection (rows, select-all bar,
     /// delete button) observe this object directly.
     let largeFileSelection = LargeFileSelection()
+    @Published var hiddenLargeFiles: [HiddenLargeFile] = HiddenLargeFilesStore.all()
     /// Duplicate groups among `largeFiles`, likewise in its own observable so the
     /// badges and the Duplicates chip can update without re-rendering the List.
     let largeFileDuplicates = LargeFileDuplicateIndex()
@@ -728,6 +739,8 @@ final class PurgeStore: ObservableObject {
                 everythingElseMeasurer: EverythingElseMeasurer()
             )
         self.defaults = defaults
+        developerCleaningEnabled = defaults.bool(forKey: DeveloperCleaningSettings.enabledKey)
+        developerCleaningRoots = defaults.stringArray(forKey: DeveloperCleaningSettings.rootsKey) ?? []
         self.scanRecordStore = ScanRecordStore(defaults: defaults)
         self.lastScanStore = lastScanStore
         var moved = Int64(defaults.integer(forKey: StorageKeys.totalMovedToTrashBytes))
@@ -842,7 +855,8 @@ final class PurgeStore: ObservableObject {
     }
 
     private func countsAsSafeCleanup(_ artifact: ProjectCacheArtifact) -> Bool {
-        artifact.safetyInfo.level == .safe
+        !deepScanArtifactIDs.contains(artifact.id)
+            && artifact.safetyInfo.level == .safe
             && artifact.reinstallSafety != .missingLockfile
             && artifact.gitStatus == .clean
     }
@@ -1396,12 +1410,23 @@ final class PurgeStore: ObservableObject {
         // Same rule as safe cleanup: a row from a full scan whose access has since
         // been turned off stays where it is. Moving it would prompt.
         let access = currentScanAccess()
+        let deepRoots = Dictionary(projectGroups.flatMap(\.artifacts)
+            .filter { deepScanArtifactIDs.contains($0.id) }
+            .map { ($0.path.standardizedFileURL.path, $0.projectRoot) }, uniquingKeysWith: { first, _ in first })
+        let live = deepRoots.isEmpty ? nil : ProjectActivityPolicy.LiveContext.current()
         let candidates = staged.filter {
-            ProtectedLocations.isReadable($0.path, access: access) && !ExcludedPathsStore.isExcluded($0.path)
-                && !($0.simulatorRuntime?.isExcluded ?? false)
+            guard ProtectedLocations.isReadable($0.path, access: access), !ExcludedPathsStore.isExcluded($0.path),
+                  !($0.simulatorRuntime?.isExcluded ?? false) else { return false }
+            if let root = deepRoots[$0.path.standardizedFileURL.path], let live {
+                return developerCleaningEnabled && !ProjectActivityPolicy.isInUse(projectRoot: root, live: live, access: access)
+            }
+            return true
         }
         let urls = candidates.map(\.path).map(\.standardizedFileURL)
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty else {
+            if !deepRoots.isEmpty { errorMessage = String(localized: "The selected project is in use or is no longer available to clean.") }
+            return
+        }
 
         var pathToDisplayName: [String: String] = [:]
         var pathToExpectedSizeBytes: [String: Int64] = [:]
@@ -2171,9 +2196,182 @@ final class PurgeStore: ObservableObject {
 
     // MARK: - Large & Old Files
 
+    func setDeveloperCleaningEnabled(_ enabled: Bool) {
+        developerCleaningEnabled = enabled
+        defaults.set(enabled, forKey: DeveloperCleaningSettings.enabledKey)
+        if !enabled { clearDeepScan() }
+    }
+
+    func addDeveloperCleaningRoots(_ urls: [URL]) {
+        let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path
+        var roots = Set(developerCleaningRoots)
+        for url in urls {
+            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+            guard PathContainment.isSameOrInside(path, home), path != home else {
+                errorMessage = String(localized: "Choose a folder inside your home folder.")
+                continue
+            }
+            roots.insert(path)
+        }
+        developerCleaningRoots = roots.sorted()
+        defaults.set(developerCleaningRoots, forKey: DeveloperCleaningSettings.rootsKey)
+    }
+
+    func removeDeveloperCleaningRoot(_ path: String) {
+        developerCleaningRoots.removeAll { $0 == path }
+        defaults.set(developerCleaningRoots, forKey: DeveloperCleaningSettings.rootsKey)
+    }
+
+    func clearDeepScan() {
+        deepScanTask?.cancel()
+        deepScanTask = nil
+        deepScanRunID = nil
+        isDeepScanning = false
+        if !deepScanArtifactIDs.isEmpty {
+            let includesDeep: ([DeletionCandidate]) -> Bool = { candidates in
+                candidates.contains { self.deepScanArtifactIDs.contains($0.path.standardizedFileURL.path) }
+            }
+            if includesDeep(deletionSheetCandidates ?? deletionCandidates) { dismissDeletionSheet() }
+            if includesDeep(stagedDeletionCandidates ?? []) { cancelDeletionFrictionFlow() }
+            if includesDeep(highRiskDeletionStagingCandidates ?? []) { cancelHighRiskDeletionSecondStep() }
+        }
+        scanSelection.artifactIDs.subtract(deepScanArtifactIDs)
+        projectGroups = projectGroups.compactMap { group in
+            var group = group
+            group.artifacts.removeAll { deepScanArtifactIDs.contains($0.id) }
+            return group.artifacts.isEmpty ? nil : group
+        }
+        deepScanArtifactIDs.removeAll()
+        deepScanUnknownCaches = []
+        deepScanIssues = []
+        deepScanStatus = ""
+    }
+
+    func cancelDeepScan() {
+        deepScanTask?.cancel()
+        deepScanTask = nil
+        deepScanRunID = nil
+        isDeepScanning = false
+        deepScanStatus = String(localized: "Deep scan stopped.")
+    }
+
+    func startDeepScan() {
+        guard developerCleaningEnabled, !isDeepScanning, !isScanningDeveloper,
+              !isScanningProjects, !isScanningAll, !isDeleting else { return }
+        clearDeepScan()
+        isDeepScanning = true
+        deepScanStatus = String(localized: "Waiting for other scans…")
+        let roots = developerCleaningRoots.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let scanner = devScanner
+        let cacheRoot = deepScanCacheRoot
+        let issues = DeepScanIssues()
+        let runID = UUID()
+        deepScanRunID = runID
+        deepScanTask = Task { [weak self] in
+            defer {
+                if let self, self.deepScanRunID == runID {
+                    self.isDeepScanning = false
+                    self.deepScanTask = nil
+                    self.deepScanRunID = nil
+                }
+            }
+            guard let self else { return }
+            await self.withScanQueueHeld {
+                while self.isScanningProjects && !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                guard !Task.isCancelled, self.developerCleaningEnabled else { return }
+                let generation = self.scanGeneration
+                let access = self.currentScanAccess()
+                let knownPaths = self.devTools.flatMap(\.paths).map { $0.standardizedFileURL.path }
+                self.deepScanStatus = String(localized: "Scanning project folders…")
+                let groups = await scanner.discoverProjects(
+                    access: access, maxDepth: 12, roots: roots,
+                    onIssue: { issues.add($0) }, includeRecent: true
+                )
+                guard !Task.isCancelled, self.developerCleaningEnabled,
+                      self.scanGeneration == generation else { return }
+                self.deepScanStatus = String(localized: "Inspecting developer caches…")
+                let cacheTask = Task.detached(priority: .utility) { () -> [DeepScanCacheFolder] in
+                    let root = cacheRoot
+                    guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+                    guard (try? root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+                          !ExcludedPathsStore.isExcluded(root), ProtectedLocations.isReadable(root, access: access) else { issues.add(root.path); return [] }
+                    guard let children = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+                        issues.add(root.path)
+                        return []
+                    }
+                    return children.compactMap { url in
+                        guard !Task.isCancelled, !ExcludedPathsStore.isExcluded(url),
+                              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                              values.isDirectory == true, values.isSymbolicLink != true,
+                              !knownPaths.contains(where: { PathContainment.isSameOrInside($0, url.standardizedFileURL.path) || PathContainment.isSameOrInside(url.standardizedFileURL.path, $0) }) else { return nil }
+                        guard let bytes = FolderSizing.directoryByteSizeIfMeasurable(at: url) else { issues.add(url.path); return nil }
+                        return DeepScanCacheFolder(url: url, sizeBytes: bytes)
+                    }.sorted { $0.sizeBytes > $1.sizeBytes }
+                }
+                let caches = await withTaskCancellationHandler {
+                    await cacheTask.value
+                } onCancel: {
+                    cacheTask.cancel()
+                }
+                guard !Task.isCancelled, self.developerCleaningEnabled, self.scanGeneration == generation else { return }
+                let paths = groups.flatMap { $0.artifacts.map(\.path) }
+                let statuses = await self.scanSources.gitStatuses(paths)
+                guard !Task.isCancelled, self.developerCleaningEnabled, self.scanGeneration == generation else { return }
+                var existing = Set(self.projectGroups.flatMap(\.artifacts).map(\.id))
+                for var group in groups {
+                    group.artifacts = group.artifacts.compactMap { artifact in
+                        guard existing.insert(artifact.id).inserted,
+                              !ExcludedPathsStore.isExcluded(artifact.path) else { return nil }
+                        var artifact = artifact
+                        artifact.gitStatus = statuses[artifact.path.standardizedFileURL.path] ?? .unknown
+                        artifact.safetyInfo = artifact.safetyInfo.heldAtCheckFirst(path: artifact.path)
+                        self.deepScanArtifactIDs.insert(artifact.id)
+                        return artifact
+                    }
+                    guard !group.artifacts.isEmpty else { continue }
+                    if let index = self.projectGroups.firstIndex(where: { $0.id == group.id }) {
+                        self.projectGroups[index].artifacts.append(contentsOf: group.artifacts)
+                    } else {
+                        self.projectGroups.append(group)
+                    }
+                }
+                self.deepScanUnknownCaches = caches
+                self.deepScanIssues = issues.snapshot()
+                self.deepScanStatus = String(localized: "Deep scan complete. Review the project results below.")
+                self.isDeepScanning = false
+                self.deepScanTask = nil
+            }
+        }
+    }
+
     var selectedLargeFiles: [LargeFile] {
         let ids = largeFileSelection.ids
-        return largeFiles.filter { ids.contains($0.id) }
+        return largeFiles.filter { ids.contains($0.id) && !HiddenLargeFilesStore.contains($0.path) }
+    }
+
+    func hideSelectedLargeFiles() {
+        let files = selectedLargeFiles
+        guard !files.isEmpty, !isDeleting else { return }
+        if !HiddenLargeFilesStore.add(files) {
+            errorMessage = String(localized: "Purge couldn't save hidden files. This change lasts until Purge quits.")
+        }
+        hiddenLargeFiles = HiddenLargeFilesStore.all()
+        let ids = Set(files.map(\.id))
+        largeFiles.removeAll { ids.contains($0.id) }
+        largeFileSelection.ids.subtract(ids)
+        largeFileDuplicates.removeFiles(ids: ids)
+    }
+
+    func unhideLargeFiles(_ paths: Set<String>) {
+        guard !paths.isEmpty else { return }
+        if !HiddenLargeFilesStore.remove(paths) {
+            errorMessage = String(localized: "Purge couldn't save hidden files. This change lasts until Purge quits.")
+        }
+        hiddenLargeFiles = HiddenLargeFilesStore.all()
+        // Re-scan to restore only rows that still match the current filters.
+        if !isScanningLargeFiles { requestScan(.largeFiles) }
     }
 
     /// The selected rows Delete Selected acts on. A file from iCloud Drive's own
@@ -2275,7 +2473,7 @@ final class PurgeStore: ObservableObject {
         }
         func publish() {
             syncExclusions()
-            largeFiles = collected.sorted { $0.sizeBytes > $1.sizeBytes }
+            largeFiles = collected.filter { !HiddenLargeFilesStore.contains($0.path) }.sorted { $0.sizeBytes > $1.sizeBytes }
         }
 
         // Models in known stores resolve from a handful of manifests and
@@ -2363,6 +2561,7 @@ final class PurgeStore: ObservableObject {
 
     func setLargeFileSelected(id: String, isSelected: Bool) {
         if isSelected {
+            guard largeFiles.contains(where: { $0.id == id && !HiddenLargeFilesStore.contains($0.path) }) else { return }
             largeFileSelection.ids.insert(id)
         } else {
             largeFileSelection.ids.remove(id)
@@ -2371,7 +2570,8 @@ final class PurgeStore: ObservableObject {
 
     func setAllLargeFilesSelected(_ selected: Bool, ids: [String]) {
         if selected {
-            largeFileSelection.ids.formUnion(ids)
+            let eligible = Set(largeFiles.filter { !HiddenLargeFilesStore.contains($0.path) }.map(\.id))
+            largeFileSelection.ids.formUnion(Set(ids).intersection(eligible))
         } else {
             largeFileSelection.ids.subtract(ids)
         }
@@ -2386,7 +2586,7 @@ final class PurgeStore: ObservableObject {
     /// when it comes from a row's menu.
     func requestRemoveDownloads(for file: LargeFile? = nil) {
         if let file {
-            guard file.canRemoveDownload else { return }
+            guard file.canRemoveDownload, !HiddenLargeFilesStore.contains(file.path) else { return }
             pendingRemoveDownload = RemoveDownloadRequest(files: [file], fromSelection: false)
             return
         }
@@ -2417,7 +2617,7 @@ final class PurgeStore: ObservableObject {
         guard let request = pendingRemoveDownload else { return }
         pendingRemoveDownload = nil
         // A row selected before its folder was excluded is left alone.
-        let targets = request.files.filter { !ExcludedPathsStore.isExcluded($0.path) }
+        let targets = request.files.filter { !ExcludedPathsStore.isExcluded($0.path) && !HiddenLargeFilesStore.contains($0.path) }
         guard !targets.isEmpty else { return }
         guard claimConfirmedCleanOrExplain() else { return }
 
@@ -2496,7 +2696,7 @@ final class PurgeStore: ObservableObject {
     private func performLargeFileDeletion(targets: [LargeFile]) async {
         // A row selected before its folder was excluded must not be trashed, and
         // a file from iCloud Drive's own folder is never offered for the Trash.
-        let targets = targets.filter { $0.canMoveToTrash && !ExcludedPathsStore.isExcluded($0.path) }
+        let targets = targets.filter { $0.canMoveToTrash && !ExcludedPathsStore.isExcluded($0.path) && !HiddenLargeFilesStore.contains($0.path) }
         guard !targets.isEmpty else { return }
         guard claimConfirmedCleanOrExplain() else { return }
 
@@ -5116,6 +5316,7 @@ final class PurgeStore: ObservableObject {
     }
 
     private func clearDeveloperScanState() {
+        clearDeepScan()
         lastScanListsStarted([.devTools, .simulators, .runtimes, .xcodeComponents, .projects])
         projectDiscoveryTask?.cancel()
         projectDiscoveryTask = nil

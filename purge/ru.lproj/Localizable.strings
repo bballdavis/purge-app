@@ -1469,3 +1469,26 @@
 "you stopped the removal" = "вы остановили удаление";
 "·" = "·";
 "…and %lld more sets where every copy is selected." = "…и ещё %lld наборов, где выбраны все копии.";
+
+/* Hidden files and developer deep scan */
+"The selected project is in use or is no longer available to clean." = "Выбранный проект используется или больше недоступен для очистки.";
+"Choose a folder inside your home folder." = "Выберите папку внутри вашей домашней папки.";
+"Deep scan stopped." = "Глубокое сканирование остановлено.";
+"Waiting for other scans…" = "Ожидание других сканирований…";
+"Scanning project folders…" = "Сканирование папок проектов…";
+"Inspecting developer caches…" = "Проверка кэшей разработчика…";
+"Deep scan complete. Review the project results below." = "Глубокое сканирование завершено. Проверьте проекты ниже.";
+"Purge couldn't save hidden files. This change lasts until Purge quits." = "Purge не удалось сохранить список скрытых файлов. Изменение действует до выхода из Purge.";
+"Stop Deep Scan" = "Остановить глубокое сканирование";
+"Deep Scan" = "Глубокое сканирование";
+"Some folders could not be fully scanned (permission, depth, or folder size limit)." = "Некоторые папки не удалось полностью просканировать из-за прав доступа, глубины или размера папки.";
+"Other cache folders to inspect (%lld)" = "Другие папки кэша для проверки (%lld)";
+"Hidden (%lld)" = "Скрытые (%lld)";
+"Unhide Selected" = "Показать выбранные";
+"Hide Selected" = "Скрыть выбранные";
+"Hide selected files" = "Скрыть выбранные файлы";
+"Developer cleaning" = "Очистка для разработчиков";
+"Review project artifacts with an on-demand deep scan." = "Проверяйте файлы сборки проектов с помощью глубокого сканирования по запросу.";
+"Developer project folders" = "Папки проектов разработчика";
+"Deep Scan searches these folders for project artifacts. It also inspects ~/.cache when present." = "Глубокое сканирование ищет файлы проектов в этих папках и проверяет ~/.cache, если она существует.";
+"No project folders added" = "Папки проектов не добавлены";
